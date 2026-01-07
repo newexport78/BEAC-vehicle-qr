@@ -3,13 +3,9 @@ import sqlite3
 import qrcode
 import os
 from datetime import date, datetime
-from werkzeug.middleware.proxy_fix import ProxyFix
 
 app = Flask(__name__)
 app.secret_key = "beac-secret-key"
-
-# ✅ Fix Render proxy / HTTPS issues
-app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "vehicles.db")
@@ -64,13 +60,8 @@ def index():
         conn.commit()
         conn.close()
 
-        # ✅ Correct public verify URL
-        verify_url = url_for(
-            "verify",
-            vehicle_no=vehicle_no,
-            _external=True,
-            _scheme="https"
-        )
+        # ✅ NORMAL url_for (Render handles HTTPS automatically)
+        verify_url = url_for("verify", vehicle_no=vehicle_no, _external=True)
 
         qr = qrcode.make(verify_url)
         qr_path = os.path.join(QR_FOLDER, f"{vehicle_no}.png")
@@ -98,7 +89,7 @@ def dashboard():
 
     return render_template("dashboard.html", vehicles=data)
 
-# ---------------- VERIFY (THIS WAS MISSING ❗) ----------------
+# ---------------- VERIFY ----------------
 @app.route("/verify/<vehicle_no>")
 def verify(vehicle_no):
     conn = get_db()
