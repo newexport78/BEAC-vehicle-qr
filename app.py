@@ -3,7 +3,6 @@ import sqlite3
 from datetime import datetime
 
 app = Flask(__name__)
-
 DB_NAME = "vehicles.db"
 
 def get_vehicle(vehicle_no):
@@ -17,16 +16,25 @@ def get_vehicle(vehicle_no):
     conn.close()
     return row
 
-@app.route("/", methods=["GET"])
+# HOME PAGE
+@app.route("/", methods=["GET", "POST"])
 def index():
+    if request.method == "POST":
+        return verify()
     return render_template("index.html")
 
-@app.route("/verify", methods=["POST"])
+# VERIFY PAGE (GET + POST SAFE)
+@app.route("/verify", methods=["GET", "POST"])
 def verify():
-    vehicle_no = request.form.get("vehicle_no")
+    vehicle_no = request.values.get("vehicle_no")
 
     if not vehicle_no:
-        return "Vehicle number missing", 400
+        return render_template(
+            "verify.html",
+            vehicle="N/A",
+            expiry="N/A",
+            status="INVALID"
+        )
 
     record = get_vehicle(vehicle_no)
 
@@ -41,10 +49,7 @@ def verify():
     expiry_date = datetime.strptime(record[1], "%Y-%m-%d").date()
     today = datetime.today().date()
 
-    if expiry_date >= today:
-        status = "VALID"
-    else:
-        status = "EXPIRED"
+    status = "VALID" if expiry_date >= today else "EXPIRED"
 
     return render_template(
         "verify.html",
