@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>BEAC Dashboard</title>
+
+    <script>
+        let isSubmitting = false;
+
+        function markSubmitting() {
+            isSubmitting = true;
+        }
+
+        window.addEventListener("beforeunload", function () {
+            if (!isSubmitting) {
+                navigator.sendBeacon("/logout");
+            }
+        });
+    </script>
+</head>
+<body>
+
+<h2>🚗 BEAC Vehicle Entry Dashboard</h2>
+
+<a href="/logout">🚪 Logout</a>
+<hr>
+
+<form method="POST" onsubmit="markSubmitting()">
+    <label>Vehicle Number:</label><br>
+    <input type="text" name="vehicle" required><br><br>
+
+    <label>Expiry Date:</label><br>
+    <input type="date" name="expiry" required min="{{ today }}"><br><br>
+
+    <button type="submit">Generate QR</button>
+</form>
+
+{% if message %}
+<p><b>{{ message }}</b></p>
+{% endif %}
+
+{% if qr_img %}
+<h3>📷 Generated QR Code</h3>
+<img src="/{{ qr_img }}" width="200">
+{% endif %}
+
+<hr>
+
+<h3>📊 Statistics</h3>
+<ul>
+    <li>Total Vehicles: {{ total }}</li>
+    <li>Today: {{ today_count }}</li>
+    <li>This Week: {{ week_count }}</li>
+    <li>This Month: {{ month_count }}</li>
+</ul>
+
+</body>
+</html>

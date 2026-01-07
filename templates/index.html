@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>BEAC Dashboard</title>
+</head>
+<body>
+
+<h2>🚗 BEAC Vehicle QR System</h2>
+
+<h3>📊 Statistics</h3>
+<ul>
+    <li>Total Vehicles: {{ total }}</li>
+    <li>Today: {{ today_count }}</li>
+    <li>This Week: {{ week_count }}</li>
+    <li>This Month: {{ month_count }}</li>
+</ul>
+
+<hr>
+
+<h3>➕ Register New Vehicle</h3>
+
+<form method="POST">
+    <input type="text" name="vehicle" placeholder="Enter Vehicle Number" required>
+    <br><br>
+    <input type="date" name="expiry" required>
+    <br><br>
+    <button type="submit">Generate QR</button>
+</form>
+
+<br>
+
+{% if message %}
+<p><b>{{ message }}</b></p>
+{% endif %}
+
+{% if qr_img %}
+<h3>📷 Generated QR Code</h3>
+<img src="/{{ qr_img }}" width="250">
+<p>Scan this QR to verify vehicle</p>
+{% endif %}
+
+<hr>
+
+<a href="/logout">🚪 Logout</a>
+
+</body>
+</html>

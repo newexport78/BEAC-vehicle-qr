@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Vehicle Verification</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f4f6f8;
+            text-align: center;
+            padding: 20px;
+        }
+        .card {
+            background: white;
+            max-width: 420px;
+            margin: auto;
+            padding: 25px;
+            border-radius: 14px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.15);
+        }
+        h2 {
+            margin-bottom: 20px;
+        }
+        .row {
+            font-size: 18px;
+            margin: 10px 0;
+        }
+        .status-valid {
+            color: green;
+            font-weight: bold;
+        }
+        .status-expired {
+            color: red;
+            font-weight: bold;
+        }
+        .status-invalid {
+            color: orange;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h2>🚗 Vehicle Verification</h2>
+
+    <p class="row"><b>Vehicle Number:</b> {{ vehicle }}</p>
+    <p class="row"><b>Expiry:</b> {{ expiry }}</p>
+
+    <p class="row">
+        <b>Status:</b>
+        {% if status == "VALID" %}
+            <span class="status-valid">{{ status }}</span>
+        {% elif status == "EXPIRED" %}
+            <span class="status-expired">{{ status }}</span>
+        {% else %}
+            <span class="status-invalid">{{ status }}</span>
+        {% endif %}
+    </p>
+</div>
+
+</body>
+</html>
