@@ -1,76 +1,87 @@
-from flask import Flask, render_template, request, redirect, url_for
+from flask import Flask, render_template, request, redirect, url_for, abort
 import sqlite3
-import qrcode
 import os
 from datetime import datetime
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 app = Flask(__name__)
+
+# Required for Render / reverse proxy
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
-DB = "vehicles.db"
-QR_FOLDER = "static/qr"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(BASE_DIR, "vehicles.db")
 
-os.makedirs(QR_FOLDER, exist_ok=True)
+
+# ---------------- DATABASE HELPER ----------------
+def get_db_connection():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
 
 # ---------------- HOME PAGE ----------------
-@app.route("/", methods=["GET", "POST"])
+@app.route("/", methods=["GET"])
 def index():
-    if request.method == "POST":
-        return redirect("/dashboard")
     return render_template("index.html")
 
-# ---------------- DASHBOARD ----------------
-@app.route("/dashboard", methods=["GET", "POST"])
-def dashboard():
-    msg = None
 
-    if request.method == "POST":
-        vehicle_no = request.form["vehicle_no"]
-        valid_date = request.form["valid_date"]
+# ---------------- HANDLE FORM SUBMIT ----------------
+# This avoids "Method Not Allowed"
+@app.route("/verify", methods=["POST"])
+def verify_post():
+    vehicle_no = request.form.get("vehicle_no", "").strip()
 
-        conn = sqlite3.connect(DB)
-        c = conn.cursor()
-        c.execute(
-            "INSERT INTO vehicles (vehicle_no, valid_date) VALUES (?, ?)",
-            (vehicle_no, valid_date)
-        )
-        conn.commit()
-        conn.close()
+    if not vehicle_no:
+        abort(400)
 
-        qr_url = f"https://beac-vehicle-qr.onrender.com/verify/{vehicle_no}"
-        qr_img = qrcode.make(qr_url)
-        qr_path = os.path.join(QR_FOLDER, f"{vehicle_no}.png")
-        qr_img.save(qr_path)
+    return redirect(url_for("verify", vehicle_no=vehicle_no))
 
-        msg = "QR Generated Successfully"
 
-    return render_template("dashboard.html", msg=msg, os=os)
-
-# ---------------- VERIFY QR ----------------
+# ---------------- VERIFY VEHICLE (QR + MANUAL) ----------------
 @app.route("/verify/<vehicle_no>", methods=["GET"])
 def verify(vehicle_no):
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-    c.execute("SELECT valid_date FROM vehicles WHERE vehicle_no=?", (vehicle_no,))
-    row = c.fetchone()
+    conn = get_db_connection()
+    vehicle = conn.execute(
+        "SELECT * FROM vehicles WHERE vehicle_no = ?",
+        (vehicle_no,)
+    ).fetchone()
     conn.close()
 
-    if not row:
-        return render_template("verify.html", status="INVALID", vehicle=vehicle_no)
+    if vehicle is None:
+        return render_template(
+            "verify.html",
+            vehicle_no=vehicle_no,
+            status="NOT FOUND",
+            valid=False
+        )
 
-    valid_date = datetime.strptime(row[0], "%Y-%m-%d").date()
+    expiry_date = datetime.strptime(vehicle["expiry_date"], "%Y-%m-%d").date()
     today = datetime.today().date()
 
-    status = "VALID ✅" if valid_date >= today else "EXPIRED ❌"
+    is_valid = today <= expiry_date
 
     return render_template(
         "verify.html",
-        vehicle=vehicle_no,
-        valid_date=valid_date,
-        status=status
+        vehicle_no=vehicle["vehicle_no"],
+        owner=vehicle["owner"],
+        expiry_date=vehicle["expiry_date"],
+        status="VALID" if is_valid else "EXPIRED",
+        valid=is_valid
     )
 
-# ---------------- RUN ----------------
+
+# ---------------- DASHBOARD (OPTIONAL) ----------------
+@app.route("/dashboard", methods=["GET"])
+def dashboard():
+    conn = get_db_connection()
+    vehicles = conn.execute("SELECT * FROM vehicles").fetchall()
+    conn.close()
+
+    return render_template("dashboard.html", vehicles=vehicles)
+
+
+# ---------------- RUN APP ----------------
 if __name__ == "__main__":
-    app.run()
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
