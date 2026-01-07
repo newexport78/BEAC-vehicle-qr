@@ -1,42 +1,32 @@
-from flask import Flask, render_template, request, redirect, url_for
+from flask import Flask, render_template, request
+from datetime import datetime
 import sqlite3
-import os
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 app = Flask(__name__)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
 DB_NAME = "vehicles.db"
 
-
-# ---------- DATABASE ----------
-def get_db():
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-# ---------- HOME PAGE ----------
+# ---------------- HOME PAGE ----------------
 @app.route("/", methods=["GET"])
-def index():
+def home():
     return render_template("index.html")
 
-
-# ---------- VERIFY VEHICLE ----------
+# ---------------- VERIFY VEHICLE ----------------
 @app.route("/verify", methods=["GET", "POST"])
 def verify():
-    # Vehicle number can come from:
-    # 1. Form POST
-    # 2. QR scan / direct URL (?vehicle_no=BP-1-2345)
-    vehicle_no = request.form.get("vehicle_no") or request.args.get("vehicle_no")
+    vehicle_no = request.values.get("vehicle_no")
 
     if not vehicle_no:
-        return redirect(url_for("index"))
+        return "Vehicle number missing", 400
 
-    conn = get_db()
+    conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
 
     cur.execute(
-        "SELECT vehicle_no, expiry_date FROM vehicles WHERE vehicle_no = ?",
-        (vehicle_no.upper(),)
+        "SELECT expiry_date FROM vehicles WHERE vehicle_no = ?",
+        (vehicle_no,)
     )
     row = cur.fetchone()
     conn.close()
@@ -45,26 +35,22 @@ def verify():
         status = "INVALID"
         expiry = "N/A"
     else:
-        expiry = row["expiry_date"]
+        expiry = row[0]
+        expiry_date = datetime.strptime(expiry, "%Y-%m-%d").date()
+        today = datetime.today().date()
 
-        # Simple expiry check (YYYY-MM-DD format)
-        from datetime import date
-        today = date.today().isoformat()
-
-        if expiry >= today:
+        if expiry_date >= today:
             status = "VALID"
         else:
             status = "EXPIRED"
 
     return render_template(
         "verify.html",
-        vehicle=vehicle_no.upper(),
+        vehicle=vehicle_no,
         expiry=expiry,
         status=status
     )
 
-
-# ---------- START APP ----------
+# ---------------- RUN ----------------
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(debug=True)
