@@ -1,28 +1,23 @@
-from flask import Flask, render_template, request, redirect, session
+from flask import Flask, render_template, request, redirect, url_for, session, flash, send_from_directory
 import sqlite3
-import qrcode
 import os
-from datetime import datetime
+import qrcode
+from datetime import datetime, date
 
+# =========================
+# APP CONFIG
+# =========================
 app = Flask(__name__)
 app.secret_key = "beac_secret"
 
-# ======================
-# CONFIG
-# ======================
 DB = "vehicles.db"
 QR_FOLDER = "static/qr"
-SERVER_IP = "192.168.1.2"   # change if IP changes
-PORT = 8000
-
-USERNAME = "admin"
-PASSWORD = "1234"
 
 os.makedirs(QR_FOLDER, exist_ok=True)
 
-# ======================
+# =========================
 # DATABASE INIT
-# ======================
+# =========================
 def init_db():
     conn = sqlite3.connect(DB)
     c = conn.cursor()
@@ -30,8 +25,8 @@ def init_db():
         CREATE TABLE IF NOT EXISTS vehicles (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             vehicle TEXT,
-            expiry TEXT,
-            created TEXT
+            visit_date TEXT,
+            created_at TEXT
         )
     """)
     conn.commit()
@@ -39,150 +34,145 @@ def init_db():
 
 init_db()
 
-# ======================
+# =========================
 # LOGIN
-# ======================
+# =========================
 @app.route("/", methods=["GET", "POST"])
 def login():
-    error = None
     if request.method == "POST":
-        if request.form["username"] == USERNAME and request.form["password"] == PASSWORD:
-            session.clear()
-            session["logged_in"] = True
+        username = request.form.get("username")
+        password = request.form.get("password")
+
+        if username == "admin" and password == "admin":
+            session["user"] = username
             return redirect("/dashboard")
         else:
-            error = "Invalid username or password"
-    return render_template("login.html", error=error)
+            flash("Invalid credentials")
 
-# ======================
-# LOGOUT
-# ======================
-@app.route("/logout", methods=["GET", "POST"])
+    return render_template("index.html")
+
+@app.route("/logout")
 def logout():
     session.clear()
     return redirect("/")
 
-# ======================
+# =========================
 # DASHBOARD
-# ======================
-@app.route("/dashboard", methods=["GET", "POST"])
+# =========================
+@app.route("/dashboard")
 def dashboard():
-    if not session.get("logged_in"):
+    if "user" not in session:
         return redirect("/")
+
+    today = date.today().isoformat()
 
     conn = sqlite3.connect(DB)
     c = conn.cursor()
 
-    message = None
-    qr_img = None
+    c.execute("SELECT COUNT(*) FROM vehicles WHERE visit_date = ?", (today,))
+    today_count = c.fetchone()[0]
 
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    today_date = datetime.now().date()
-
-    # ----------------------
-    # REGISTER VEHICLE (DAILY RULE)
-    # ----------------------
-    if request.method == "POST":
-        vehicle = request.form["vehicle"].lower()
-        expiry = request.form["expiry"]
-
-        expiry_date = datetime.strptime(expiry, "%Y-%m-%d").date()
-
-        # ❌ Block past expiry
-        if expiry_date < today_date:
-            message = "❌ Past expiry dates are not allowed"
-
-        else:
-            # ❌ Block same vehicle on same day
-            c.execute(
-                "SELECT COUNT(*) FROM vehicles WHERE vehicle=? AND created=?",
-                (vehicle, today_str)
-            )
-            already_today = c.fetchone()[0]
-
-            if already_today > 0:
-                message = "❌ This vehicle already generated a QR today"
-            else:
-                c.execute(
-                    "INSERT INTO vehicles (vehicle, expiry, created) VALUES (?, ?, ?)",
-                    (vehicle, expiry, today_str)
-                )
-                conn.commit()
-
-                qr_data = f"http://{SERVER_IP}:{PORT}/verify/{vehicle}"
-                img = qrcode.make(qr_data)
-
-                img_path = f"{QR_FOLDER}/{vehicle}_{today_str}.png"
-                img.save(img_path)
-
-                qr_img = img_path
-                message = "✅ QR generated successfully"
-
-    # ----------------------
-    # 📊 STATISTICS
-    # ----------------------
-    total = c.execute("SELECT COUNT(*) FROM vehicles").fetchone()[0]
-
-    today_count = c.execute(
-        "SELECT COUNT(*) FROM vehicles WHERE created = ?",
-        (today_str,)
-    ).fetchone()[0]
-
-    week_count = c.execute(
-        "SELECT COUNT(*) FROM vehicles WHERE date(created) >= date('now','-7 day')"
-    ).fetchone()[0]
-
-    month_count = c.execute(
-        "SELECT COUNT(*) FROM vehicles WHERE date(created) >= date('now','start of month')"
-    ).fetchone()[0]
+    c.execute("SELECT COUNT(*) FROM vehicles")
+    total_count = c.fetchone()[0]
 
     conn.close()
 
     return render_template(
         "dashboard.html",
-        qr_img=qr_img,
-        message=message,
-        total=total,
         today_count=today_count,
-        week_count=week_count,
-        month_count=month_count,
-        today=today_str
+        total_count=total_count,
+        today=today
     )
 
-# ======================
-# VERIFY VEHICLE
-# ======================
-@app.route("/verify/<vehicle>")
-def verify(vehicle):
+# =========================
+# GENERATE QR
+# =========================
+@app.route("/generate", methods=["POST"])
+def generate_qr():
+    if "user" not in session:
+        return redirect("/")
+
+    vehicle = request.form.get("vehicle").strip().upper()
+    visit_date = request.form.get("visit_date")
+
+    today = date.today().isoformat()
+
+    # ❌ BLOCK PAST DATE
+    if visit_date < today:
+        flash("Past dates are not allowed")
+        return redirect("/dashboard")
+
     conn = sqlite3.connect(DB)
     c = conn.cursor()
 
-    # Get latest entry for vehicle
+    # ❌ BLOCK SAME VEHICLE SAME DAY
     c.execute(
-        "SELECT expiry FROM vehicles WHERE vehicle=? ORDER BY created DESC LIMIT 1",
-        (vehicle.lower(),)
+        "SELECT * FROM vehicles WHERE vehicle = ? AND visit_date = ?",
+        (vehicle, visit_date)
     )
-    row = c.fetchone()
+    if c.fetchone():
+        conn.close()
+        flash("QR already generated for this vehicle today")
+        return redirect("/dashboard")
+
+    # =========================
+    # ✅ FIX: DYNAMIC BASE URL
+    # =========================
+    base_url = request.host_url.rstrip("/")
+    qr_url = f"{base_url}/verify/{vehicle}/{visit_date}"
+
+    qr_img = qrcode.make(qr_url)
+    filename = f"{vehicle}_{visit_date}.png"
+    filepath = os.path.join(QR_FOLDER, filename)
+    qr_img.save(filepath)
+
+    c.execute(
+        "INSERT INTO vehicles (vehicle, visit_date, created_at) VALUES (?, ?, ?)",
+        (vehicle, visit_date, datetime.now().isoformat())
+    )
+
+    conn.commit()
     conn.close()
 
-    if row:
-        expiry_date = datetime.strptime(row[0], "%Y-%m-%d").date()
-        today = datetime.now().date()
-        status = "VALID" if expiry_date >= today else "EXPIRED"
-        expiry = expiry_date
-    else:
-        status = "INVALID VEHICLE"
-        expiry = "Not Found"
-
+    flash("QR generated successfully")
     return render_template(
-        "verify.html",
-        vehicle=vehicle,
-        expiry=expiry,
-        status=status
+        "qr.html",
+        qr_image=f"qr/{filename}",
+        qr_url=qr_url
     )
 
-# ======================
-# RUN SERVER
-# ======================
+# =========================
+# VERIFY QR
+# =========================
+@app.route("/verify/<vehicle>/<visit_date>")
+def verify(vehicle, visit_date):
+    conn = sqlite3.connect(DB)
+    c = conn.cursor()
+
+    c.execute(
+        "SELECT * FROM vehicles WHERE vehicle = ? AND visit_date = ?",
+        (vehicle.upper(), visit_date)
+    )
+    record = c.fetchone()
+    conn.close()
+
+    if record:
+        return render_template(
+            "verify.html",
+            status="VALID",
+            vehicle=vehicle,
+            visit_date=visit_date
+        )
+    else:
+        return render_template(
+            "verify.html",
+            status="INVALID",
+            vehicle=vehicle,
+            visit_date=visit_date
+        )
+
+# =========================
+# RUN
+# =========================
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=PORT)
+    app.run(debug=True)
