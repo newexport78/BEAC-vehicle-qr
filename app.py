@@ -1,4 +1,5 @@
-from flask import Flask, render_template, request, redirect, url_for, session, flash, send_from_directory
+from flask import Flask, render_template, request, redirect, session, flash
+from werkzeug.middleware.proxy_fix import ProxyFix
 import sqlite3
 import os
 import qrcode
@@ -10,9 +11,11 @@ from datetime import datetime, date
 app = Flask(__name__)
 app.secret_key = "beac_secret"
 
+# 🔥 REQUIRED FOR RENDER
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
+
 DB = "vehicles.db"
 QR_FOLDER = "static/qr"
-
 os.makedirs(QR_FOLDER, exist_ok=True)
 
 # =========================
@@ -40,15 +43,10 @@ init_db()
 @app.route("/", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
-        username = request.form.get("username")
-        password = request.form.get("password")
-
-        if username == "admin" and password == "admin":
-            session["user"] = username
+        if request.form["username"] == "admin" and request.form["password"] == "admin":
+            session["user"] = "admin"
             return redirect("/dashboard")
-        else:
-            flash("Invalid credentials")
-
+        flash("Invalid login")
     return render_template("index.html")
 
 @app.route("/logout")
@@ -65,24 +63,13 @@ def dashboard():
         return redirect("/")
 
     today = date.today().isoformat()
-
     conn = sqlite3.connect(DB)
     c = conn.cursor()
-
     c.execute("SELECT COUNT(*) FROM vehicles WHERE visit_date = ?", (today,))
     today_count = c.fetchone()[0]
-
-    c.execute("SELECT COUNT(*) FROM vehicles")
-    total_count = c.fetchone()[0]
-
     conn.close()
 
-    return render_template(
-        "dashboard.html",
-        today_count=today_count,
-        total_count=total_count,
-        today=today
-    )
+    return render_template("dashboard.html", today=today, today_count=today_count)
 
 # =========================
 # GENERATE QR
@@ -92,54 +79,41 @@ def generate_qr():
     if "user" not in session:
         return redirect("/")
 
-    vehicle = request.form.get("vehicle").strip().upper()
-    visit_date = request.form.get("visit_date")
-
+    vehicle = request.form["vehicle"].upper().strip()
+    visit_date = request.form["visit_date"]
     today = date.today().isoformat()
 
-    # ❌ BLOCK PAST DATE
     if visit_date < today:
-        flash("Past dates are not allowed")
+        flash("Past dates not allowed")
         return redirect("/dashboard")
 
     conn = sqlite3.connect(DB)
     c = conn.cursor()
 
-    # ❌ BLOCK SAME VEHICLE SAME DAY
     c.execute(
-        "SELECT * FROM vehicles WHERE vehicle = ? AND visit_date = ?",
+        "SELECT * FROM vehicles WHERE vehicle=? AND visit_date=?",
         (vehicle, visit_date)
     )
     if c.fetchone():
+        flash("QR already exists for today")
         conn.close()
-        flash("QR already generated for this vehicle today")
         return redirect("/dashboard")
 
-    # =========================
-    # ✅ FIX: DYNAMIC BASE URL
-    # =========================
-    base_url = request.host_url.rstrip("/")
-    qr_url = f"{base_url}/verify/{vehicle}/{visit_date}"
+    # ✅ FULL HTTPS SAFE URL
+    qr_url = f"{request.url_root.rstrip('/')}/verify/{vehicle}/{visit_date}"
 
-    qr_img = qrcode.make(qr_url)
+    img = qrcode.make(qr_url)
     filename = f"{vehicle}_{visit_date}.png"
-    filepath = os.path.join(QR_FOLDER, filename)
-    qr_img.save(filepath)
+    img.save(os.path.join(QR_FOLDER, filename))
 
     c.execute(
         "INSERT INTO vehicles (vehicle, visit_date, created_at) VALUES (?, ?, ?)",
         (vehicle, visit_date, datetime.now().isoformat())
     )
-
     conn.commit()
     conn.close()
 
-    flash("QR generated successfully")
-    return render_template(
-        "qr.html",
-        qr_image=f"qr/{filename}",
-        qr_url=qr_url
-    )
+    return render_template("qr.html", qr_image=f"qr/{filename}", qr_url=qr_url)
 
 # =========================
 # VERIFY QR
@@ -148,31 +122,30 @@ def generate_qr():
 def verify(vehicle, visit_date):
     conn = sqlite3.connect(DB)
     c = conn.cursor()
-
     c.execute(
-        "SELECT * FROM vehicles WHERE vehicle = ? AND visit_date = ?",
+        "SELECT * FROM vehicles WHERE vehicle=? AND visit_date=?",
         (vehicle.upper(), visit_date)
     )
-    record = c.fetchone()
+    row = c.fetchone()
     conn.close()
 
-    if record:
+    if row:
         return render_template(
             "verify.html",
             status="VALID",
             vehicle=vehicle,
             visit_date=visit_date
         )
-    else:
-        return render_template(
-            "verify.html",
-            status="INVALID",
-            vehicle=vehicle,
-            visit_date=visit_date
-        )
+
+    return render_template(
+        "verify.html",
+        status="INVALID",
+        vehicle=vehicle,
+        visit_date=visit_date
+    )
 
 # =========================
 # RUN
 # =========================
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run()
